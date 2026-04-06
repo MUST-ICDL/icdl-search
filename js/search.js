@@ -26,14 +26,21 @@ function padID(id) {
   return String(id).padStart(ID_PAD_LENGTH, '0');
 }
 
-/**
- * Get the total size of the data file in bytes via HEAD request.
- * @returns {Promise<number>}
- */
 async function getFileSize() {
-  const resp = await fetch(DATA_FILE_PATH, { method: 'HEAD' });
+  // We use a GET request with Range: bytes=0-0 to prevent the CDN from returning
+  // the gzip-compressed total file size in Content-Length. 
+  // The uncompressed total size will be explicitly given in Content-Range (e.g. "bytes 0-0/342638")
+  const resp = await fetch(DATA_FILE_PATH, { headers: { 'Range': 'bytes=0-0' } });
+  
+  const contentRange = resp.headers.get('Content-Range');
+  if (contentRange) {
+    const match = contentRange.match(/\/(\d+)/);
+    if (match) return parseInt(match[1], 10);
+  }
+
+  // Fallback if the server ignores the Range request
   const len = resp.headers.get('Content-Length');
-  if (!len) throw new Error('Server did not return Content-Length. Range requests may not be supported.');
+  if (!len) throw new Error('Server did not return Content-Length or Content-Range.');
   return parseInt(len, 10);
 }
 
