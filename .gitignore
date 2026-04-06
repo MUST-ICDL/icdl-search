@@ -1,0 +1,10 @@
+# Private docs
+/private/
+
+# Local dev files
+cert.pem
+https_server.py
+
+# OS files
+.DS_Store
+Thumbs.db
