@@ -115,46 +115,63 @@ async function searchByID(targetID) {
   let low = 0;
   let high = fileSize;
   let iterations = 0;
-  const MAX_ITER = 40; // safety limit
-  const LINEAR_THRESHOLD = CHUNK_SIZE * 4; // switch to linear scan when range is small
+  const MAX_ITER = 50; // safety limit
+  const LINEAR_THRESHOLD = CHUNK_SIZE * 8; // switch to linear scan when range is small
 
-  // --- Phase 1: Binary search to narrow the range ---
+  // --- Phase 1: Binary search to narrow the byte range ---
   while ((high - low) > LINEAR_THRESHOLD && iterations < MAX_ITER) {
     iterations++;
     const mid = Math.floor((low + high) / 2);
 
     const fetchEnd = Math.min(mid + CHUNK_SIZE - 1, fileSize - 1);
     const chunk = await fetchChunk(mid, fetchEnd);
-    const line = extractFirstCompleteLine(chunk, mid === 0);
 
-    if (!line) {
+    // Find the newline that ends the partial line we landed in
+    const newlinePos = chunk.indexOf('\n');
+    if (newlinePos === -1 || newlinePos + 1 >= chunk.length) {
+      // No complete line in this chunk — shrink from above
       high = mid;
       continue;
     }
 
-    const rowID = parseID(line);
+    // The next complete line starts right after the newline
+    const lineAfterNewline = chunk.substring(newlinePos + 1).split('\n')[0];
+    if (!lineAfterNewline || lineAfterNewline.length < 3) {
+      high = mid;
+      continue;
+    }
+
+    const rowID = parseID(lineAfterNewline);
+
+    // Skip non-numeric lines (e.g. header row)
+    if (isNaN(rowID)) {
+      low = mid + newlinePos + 1 + lineAfterNewline.length + 1;
+      continue;
+    }
 
     if (rowID === target) {
-      return { found: true, raw: line };
+      return { found: true, raw: lineAfterNewline };
     } else if (rowID < target) {
-      // Advance low past this line
-      const lineStart = chunk.indexOf(line);
-      low = mid + lineStart + line.length + 1;
+      // Target is after this line — advance low past it
+      low = mid + newlinePos + 1 + lineAfterNewline.length + 1;
     } else {
-      // Target is before this line — move high to the start of this line
-      const lineStart = chunk.indexOf(line);
-      high = mid + lineStart;
+      // Target is before this line — set high to the byte where this line starts
+      // (which is mid + newlinePos + 1), so the target line is still in [low, high)
+      high = mid + newlinePos + 1;
     }
   }
 
   // --- Phase 2: Linear scan of the remaining small range ---
-  const scanEnd = Math.min(high + CHUNK_SIZE, fileSize - 1);
-  const remaining = await fetchChunk(low, scanEnd);
+  // Fetch a generous window to ensure we don't miss the target
+  const scanStart = Math.max(0, low - 1);
+  const scanEnd = Math.min(high + CHUNK_SIZE * 2, fileSize - 1);
+  const remaining = await fetchChunk(scanStart, scanEnd);
   const lines = remaining.split('\n');
 
   for (const line of lines) {
-    if (!line || line.length < ID_PAD_LENGTH) continue;
+    if (!line || line.length < 3) continue;
     const rowID = parseID(line);
+    if (isNaN(rowID)) continue; // skip header
     if (rowID === target) {
       return { found: true, raw: line };
     }
