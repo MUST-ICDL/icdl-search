@@ -1,19 +1,18 @@
 /**
- * search.js — Binary search engine for sorted, fixed-width TSV files.
+ * search.js — Search engine loaded entirely in-memory.
  *
  * The data file must be sorted by zero-padded integer ID (first column).
- * Each row is: ID\tField2\tField3\t...\tFieldN\n
- *
- * Uses HTTP Range requests so only ~20 small fetches are needed for 50,000 rows.
+ * Each row is: ID\tField2\tField3\t...\tFieldN
  */
 
 // ===== Configuration =====
 const DATA_FILE_PATH = 'data/data.tsv';
-const CHUNK_SIZE = 512;         // bytes per Range request
 const ID_PAD_LENGTH = 9;        // zero-pad width
 
 // Field names in order of appearance
 const FIELD_NAMES = ['id', 'name', 'EGT', 'Last_Date', 'status'];
+
+let cachedLines = null;
 
 // ===== Helper Functions =====
 
@@ -26,73 +25,40 @@ function padID(id) {
   return String(id).padStart(ID_PAD_LENGTH, '0');
 }
 
-async function getFileSize() {
-  // We use a GET request with Range: bytes=0-0 to prevent the CDN from returning
-  // the gzip-compressed total file size in Content-Length. 
-  // The uncompressed total size will be explicitly given in Content-Range (e.g. "bytes 0-0/342638")
-  const resp = await fetch(DATA_FILE_PATH, { headers: { 'Range': 'bytes=0-0' } });
+/**
+ * Download the data file and cache it as an array of lines.
+ */
+async function loadData() {
+  if (cachedLines !== null) {
+    return cachedLines;
+  }
   
-  const contentRange = resp.headers.get('Content-Range');
-  if (contentRange) {
-    const match = contentRange.match(/\/(\d+)/);
-    if (match) return parseInt(match[1], 10);
+  // Use fetch to download the entire file once
+  const resp = await fetch(DATA_FILE_PATH);
+  if (!resp.ok) {
+    throw new Error(`Server returned ${resp.status}`);
   }
-
-  // Fallback if the server ignores the Range request
-  const len = resp.headers.get('Content-Length');
-  if (!len) throw new Error('Server did not return Content-Length or Content-Range.');
-  return parseInt(len, 10);
-}
-
-/**
- * Fetch a byte range from the data file.
- * @param {number} start - inclusive start byte
- * @param {number} end   - inclusive end byte
- * @returns {Promise<string>} chunk of text
- */
-async function fetchChunk(start, end) {
-  const resp = await fetch(DATA_FILE_PATH, {
-    headers: { 'Range': `bytes=${start}-${end}` }
-  });
-  return resp.text();
-}
-
-/**
- * Given a raw chunk, find the first COMPLETE line within it.
- * If isFileStart is false, we skip the first (likely partial) line.
- * @param {string} text
- * @param {boolean} isFileStart - true if chunk starts at byte 0
- * @returns {string|null} first complete line or null
- */
-function extractFirstCompleteLine(text, isFileStart) {
-  const lines = text.split('\n');
-
-  if (isFileStart) {
-    // First line is complete
-    return lines[0] || null;
+  
+  const text = await resp.text();
+  // Split into lines, handle both LF and CRLF, filter out empty ones
+  const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+  
+  // Remove header if the first line doesn't start with a number
+  if (lines.length > 0) {
+    const firstId = parseInt(lines[0].split('\t')[0], 10);
+    if (isNaN(firstId)) {
+      lines.shift();
+    }
   }
-
-  // Skip the partial first line, return the next one
-  if (lines.length >= 2 && lines[1].length > 0) {
-    return lines[1];
-  }
-  return null;
-}
-
-/**
- * Parse the integer ID from the first field of a TSV line.
- * @param {string} line
- * @returns {number}
- */
-function parseID(line) {
-  const first = line.split('\t')[0];
-  return parseInt(first, 10);
+  
+  cachedLines = lines;
+  return cachedLines;
 }
 
 // ===== Binary Search =====
 
 /**
- * Search for a row by integer ID using binary search over HTTP Range requests.
+ * Search for a row by integer ID using binary search over the loaded array.
  *
  * @param {number|string} targetID - the MUST ID to find
  * @returns {Promise<{found: boolean, raw: string}>}
@@ -109,9 +75,9 @@ async function searchByID(targetID) {
     };
   }
 
-  let fileSize;
+  let lines;
   try {
-    fileSize = await getFileSize();
+    lines = await loadData();
   } catch (e) {
     return {
       found: false,
@@ -120,70 +86,43 @@ async function searchByID(targetID) {
   }
 
   let low = 0;
-  let high = fileSize;
-  let iterations = 0;
-  const MAX_ITER = 50; // safety limit
-  const LINEAR_THRESHOLD = CHUNK_SIZE * 8; // switch to linear scan when range is small
+  let high = lines.length - 1;
 
-  // --- Phase 1: Binary search to narrow the byte range ---
-  while ((high - low) > LINEAR_THRESHOLD && iterations < MAX_ITER) {
-    iterations++;
+  while (low <= high) {
     const mid = Math.floor((low + high) / 2);
+    const line = lines[mid];
+    const firstTab = line.indexOf('\t');
+    const idStr = firstTab === -1 ? line : line.substring(0, firstTab);
+    const rowID = parseInt(idStr, 10);
 
-    const fetchEnd = Math.min(mid + CHUNK_SIZE - 1, fileSize - 1);
-    const chunk = await fetchChunk(mid, fetchEnd);
-
-    // Find the newline that ends the partial line we landed in
-    const newlinePos = chunk.indexOf('\n');
-    if (newlinePos === -1 || newlinePos + 1 >= chunk.length) {
-      // No complete line in this chunk — shrink from above
-      high = mid;
-      continue;
-    }
-
-    // The next complete line starts right after the newline
-    const lineAfterNewline = chunk.substring(newlinePos + 1).split('\n')[0];
-    if (!lineAfterNewline || lineAfterNewline.length < 3) {
-      high = mid;
-      continue;
-    }
-
-    const rowID = parseID(lineAfterNewline);
-
-    // Skip non-numeric lines (e.g. header row)
     if (isNaN(rowID)) {
-      low = mid + newlinePos + 1 + lineAfterNewline.length + 1;
-      continue;
+      // Should not happen as we filtered lines, but fallback to linear scan if it does
+      break;
     }
 
     if (rowID === target) {
-      return { found: true, raw: lineAfterNewline };
+      return { found: true, raw: line };
     } else if (rowID < target) {
-      // Target is after this line — advance low past it
-      low = mid + newlinePos + 1 + lineAfterNewline.length + 1;
+      low = mid + 1;
     } else {
-      // Target is before this line — set high to the byte where this line starts
-      // (which is mid + newlinePos + 1), so the target line is still in [low, high)
-      high = mid + newlinePos + 1;
+      high = mid - 1;
     }
   }
 
-  // --- Phase 2: Linear scan of the remaining small range ---
-  // Fetch a generous window to ensure we don't miss the target
-  const scanStart = Math.max(0, low - 1);
-  const scanEnd = Math.min(high + CHUNK_SIZE * 2, fileSize - 1);
-  const remaining = await fetchChunk(scanStart, scanEnd);
-  const lines = remaining.split('\n');
-
-  for (const line of lines) {
-    if (!line || line.length < 3) continue;
-    const rowID = parseID(line);
-    if (isNaN(rowID)) continue; // skip header
+  // Fallback linear scan just in case the array wasn't perfectly sorted
+  // or we broke out of the binary search loop
+  const scanStart = Math.max(0, low - 50);
+  const scanEnd = Math.min(lines.length - 1, high + 50);
+  
+  for (let i = scanStart; i <= scanEnd; i++) {
+    const line = lines[i];
+    const firstTab = line.indexOf('\t');
+    const idStr = firstTab === -1 ? line : line.substring(0, firstTab);
+    const rowID = parseInt(idStr, 10);
+    
     if (rowID === target) {
       return { found: true, raw: line };
     }
-    // Since file is sorted, stop early if we've passed the target
-    if (rowID > target) break;
   }
 
   return {
@@ -197,7 +136,7 @@ async function searchByID(targetID) {
 /**
  * Extract named fields from a raw TSV line.
  * @param {string} rawLine
- * @returns {object} e.g. { found, id, name, course, date, status, center }
+ * @returns {object} e.g. { found, id, name, last_date, status }
  */
 function extractFields(rawLine) {
   const parts = rawLine.split('\t');
