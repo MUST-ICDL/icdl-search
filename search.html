@@ -34,13 +34,13 @@
       <!-- Header -->
       <div class="search-header">
         <h1>Certificate Search</h1>
-        <p>Enter your MUST ID to view your results (e.g. 200024369 or 24369).</p>
+        <p>Enter your MUST ID to view your results (in range 37495 to 200035409).</p>
       </div>
 
       <!-- Search Form -->
       <form id="searchForm" class="search-form" action="search.html" method="get">
-        <input type="text" id="idInput" name="id" class="search-form__input" placeholder="e.g. 200024369"
-          autocomplete="off" maxlength="9" inputmode="numeric" aria-label="MUST ID">
+        <input type="text" id="idInput" name="id" class="search-form__input" placeholder="ID number" autocomplete="on"
+          maxlength="9" inputmode="numeric" aria-label="MUST ID">
         <button type="submit" id="searchBtn" class="btn btn--primary">
           Search
         </button>
