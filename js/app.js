@@ -92,6 +92,7 @@ function renderResult(fields, highlightField) {
 
   const makeField = (label, value, key) => {
     const hlClass = (highlightField && key === highlightField) ? ' highlight' : '';
+    const egtClass = key === 'EGT' ? ' result-field__value--egt' : '';
     if (key === 'status') {
       return `
         <div class="result-field">
@@ -102,7 +103,7 @@ function renderResult(fields, highlightField) {
     return `
       <div class="result-field">
         <span class="result-field__label">${label}</span>
-        <span class="result-field__value${hlClass}">${value}</span>
+        <span class="result-field__value${hlClass}${egtClass}">${value}</span>
       </div>`;
   };
 

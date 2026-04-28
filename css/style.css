@@ -623,6 +623,16 @@ input, button { font-family: inherit; font-size: inherit; }
   color: var(--clr-accent-2);
 }
 
+.result-field__value--egt {
+  font-size: 1.125rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #f59e0b 0%, #ec4899 50%, #8b5cf6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 20px rgba(236, 72, 153, 0.4);
+}
+
 /* Status badges */
 .badge {
   display: inline-flex;
