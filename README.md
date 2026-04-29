@@ -36,7 +36,25 @@ The search engine relies on `data/data.tsv` being strictly zero-padded (9-digit)
    This outputs the properly formatted `data/data.tsv` file.
 
 
-## 5. Architecture & Technical Notes
+## 5. How to Update it on GitHub
+Once you have modified the site internally or updated the `data/data.tsv` file, you need to sync the changes to your remote GitHub repository so they go live.
+
+1. Open your terminal in the project folder.
+2. Stage all changed files:
+   ```bash
+   git add .
+   ```
+3. Commit your updates with a descriptive message:
+   ```bash
+   git commit -m "Updated certificate data file for the new month"
+   ```
+4. Push the changes to GitHub:
+   ```bash
+   git push origin main
+   ```
+*(GitHub Pages will automatically rebuild and your changes should be live within 1-2 minutes).*
+
+## 6. Architecture & Technical Notes
 - **Data File Schema:**
   - `ID`: 9-digit zero-padded string (e.g., `000054321`)
   - `Name`: Candidate First and Last Name
